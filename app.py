@@ -59,10 +59,10 @@ CLOUD_HTML = """
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ambulance Live Tracking & Traffic Congestion Map</title>
+  <title>Ambulance Corridor & Upcoming Junction Queue</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
-    body { font-family: -apple-system, sans-serif; background: #0f172a; color: #f8fafc; padding: 15px; max-width: 650px; margin: auto; }
+    body { font-family: -apple-system, sans-serif; background: #0f172a; color: #f8fafc; padding: 15px; max-width: 680px; margin: auto; }
     .card { background: #1e293b; border-radius: 12px; padding: 16px; margin-bottom: 14px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
     h2 { color: #38bdf8; margin-top: 0; font-size: 1.15rem; }
     label { font-size: 0.85rem; color: #94a3b8; display: block; margin-bottom: 6px; }
@@ -71,9 +71,14 @@ CLOUD_HTML = """
     button { background: #059669; color: white; border: none; padding: 14px; cursor: pointer; }
     button:active { background: #047857; }
     .data-box { font-family: monospace; font-size: 0.9rem; line-height: 1.5; color: #a7f3d0; margin-top: 8px; }
-    #map { height: 320px; width: 100%; border-radius: 8px; margin-top: 10px; border: 1px solid #475569; z-index: 1; }
-    .legend { background: rgba(15, 23, 42, 0.9); padding: 8px 12px; border-radius: 6px; color: white; font-size: 0.8rem; line-height: 1.4; border: 1px solid #475569; }
-    .legend i { width: 12px; height: 12px; float: left; margin-right: 6px; opacity: 0.9; border-radius: 2px; }
+    .junction-list { max-height: 160px; overflow-y: auto; background: #0f172a; border: 1px solid #475569; border-radius: 8px; padding: 8px; margin-top: 8px; font-size: 0.85rem; font-family: monospace; }
+    .junction-item { padding: 6px 8px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; }
+    .junction-item:last-child { border-bottom: none; }
+    .badge-preempt { background: #ef4444; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; animation: pulse 1s infinite; }
+    .badge-normal { background: #334155; color: #94a3b8; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; }
+    #map { height: 300px; width: 100%; border-radius: 8px; margin-top: 10px; border: 1px solid #475569; z-index: 1; }
+    .legend { background: rgba(15, 23, 42, 0.9); padding: 8px 12px; border-radius: 6px; color: white; font-size: 0.75rem; line-height: 1.4; border: 1px solid #475569; }
+    .legend i { width: 10px; height: 10px; float: left; margin-right: 6px; opacity: 0.9; border-radius: 2px; }
     .pulse { display: inline-block; width: 10px; height: 10px; background: #22c55e; border-radius: 50%; animation: pulse 1.5s infinite; margin-right: 6px; }
     @keyframes pulse { 0% { transform: scale(0.95); opacity: 0.8; } 50% { transform: scale(1.3); opacity: 1; } 100% { transform: scale(0.95); opacity: 0.8; } }
   </style>
@@ -97,7 +102,15 @@ CLOUD_HTML = """
   </div>
 
   <div class="card">
-    <h2>🗺️ Live Traffic Congestion & Routing Map</h2>
+    <h2>🚦 Upcoming Traffic Junctions Queue</h2>
+    <div style="font-size:0.85rem; color:#94a3b8;">Junctions along route requiring preemption:</div>
+    <div id="upcomingJunctions" class="junction-list">
+      <div style="color:#64748b; text-align:center; padding:15px;">Awaiting active route data...</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🗺️ Live Traffic Congestion & Route Map</h2>
     <div id="etaOutput" class="data-box">Awaiting active GPS stream...</div>
     <div id="map"></div>
   </div>
@@ -117,7 +130,6 @@ function initMap(lat, lng) {
       attribution: '© OpenStreetMap'
     }).addTo(map);
 
-    // Add Traffic Legend control to map
     const legend = L.control({position: 'bottomright'});
     legend.onAdd = function (map) {
       const div = L.DomUtil.create('div', 'legend');
@@ -157,13 +169,24 @@ function startTracking() {
       .then(res => res.json())
       .then(data => {
         document.getElementById('etaOutput').innerHTML = `
-          <b>Nearest Traffic Hub:</b> <span style="color:#38bdf8;">${data.closest_junction}</span><br>
           <b>Target Hospital:</b> <span style="color:#f43f5e;">${data.hospital_name}</span><br>
-          <b>Straight-line Dist:</b> ${data.straight_dist_m} meters<br><hr>
-          <b>🚗 Live Routing Metrics:</b><br>
-          • Road Distance: <b>${data.api_distance}</b><br>
-          • Dynamic ETA: <span style="color:#facc15; font-size:1.05rem;"><b>${data.api_eta}</b></span>
+          <b>Total Road Dist:</b> ${data.api_distance} | <b>ETA:</b> <span style="color:#facc15;"><b>${data.api_eta}</b></span>
         `;
+
+        // Render Upcoming Junctions Queue
+        const jListContainer = document.getElementById('upcomingJunctions');
+        if (data.upcoming_junctions && data.upcoming_junctions.length > 0) {
+          let html = '';
+          data.upcoming_junctions.forEach(j => {
+            const badge = j.preempt_active 
+              ? '<span class="badge-preempt">🟢 GREEN CORRIDOR ACTIVE</span>' 
+              : '<span class="badge-normal">Upcoming (~' + j.dist_m + 'm)</span>';
+            html += `<div class="junction-item"><span><b>${j.name}</b></span>${badge}</div>`;
+          });
+          jListContainer.innerHTML = html;
+        } else {
+          jListContainer.innerHTML = '<div style="color:#64748b; text-align:center; padding:15px;">No junctions within range.</div>';
+        }
 
         initMap(lat, lng);
 
@@ -183,21 +206,18 @@ function startTracking() {
           hospitalMarker.bindPopup(`<b>🏥 ${data.hospital_name}</b>`);
         }
 
-        // Clear existing route segments
         routeLayers.forEach(layer => map.removeLayer(layer));
         routeLayers = [];
 
-        // Render multi-colored traffic congestion segments
         if (data.segments && data.segments.length > 0) {
           let allLatLngs = [];
           data.segments.forEach(seg => {
             const segLatLngs = seg.coords.map(c => [c[1], c[0]]);
             allLatLngs = allLatLngs.concat(segLatLngs);
 
-            // Assign color based on congestion level
-            let color = '#22c55e'; // Green (Clear)
-            if (seg.congestion === 'heavy') color = '#ef4444';      // Red (Heavy traffic)
-            else if (seg.congestion === 'moderate') color = '#eab308'; // Yellow (Moderate)
+            let color = '#22c55e';
+            if (seg.congestion === 'heavy') color = '#ef4444';
+            else if (seg.congestion === 'moderate') color = '#eab308';
 
             const polyline = L.polyline(segLatLngs, { color: color, weight: 6, opacity: 0.85 }).addTo(map);
             routeLayers.push(polyline);
@@ -243,10 +263,20 @@ def update_location():
     dest_lat = target_hospital["lat"]
     dest_lng = target_hospital["lng"]
 
-    closest = min(SMART_JUNCTIONS, key=lambda j: haversine_m(phone_lat, phone_lng, j["lat"], j["lng"]))
-    straight_dist = round(haversine_m(phone_lat, phone_lng, closest["lat"], closest["lng"]))
+    # Filter junctions lying within a 4km radius along the route corridor and sort them by proximity
+    upcoming_juncs = []
+    for j in SMART_JUNCTIONS:
+        dist = haversine_m(phone_lat, phone_lng, j["lat"], j["lng"])
+        if dist <= 4000:  # within 4 km corridor
+            upcoming_juncs.append({
+                "name": j["name"],
+                "dist_m": round(dist),
+                "preempt_active": dist <= 500  # Green corridor triggered if under 500 meters
+            })
     
-    # Query OSRM Route API with full step geometry to evaluate traffic blocks per segment
+    # Sort by closest distance
+    upcoming_juncs.sort(key=lambda x: x["dist_m"])
+
     url = f"http://router.project-osrm.org/route/v1/driving/{phone_lng},{phone_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson&steps=true"
     
     api_dist = "N/A"
@@ -264,24 +294,18 @@ def update_location():
             api_dist = f"{dist_m / 1000:.2f} km" if dist_m >= 1000 else f"{dist_m:.0f} m"
             api_eta = f"{max(1, round(duration_s / 60))} mins"
             
-            # Break route legs/steps down into dynamic traffic congestion color bands
-            legs = route.get("legs", [])
-            for leg in legs:
-                steps = leg.get("steps", [])
-                for idx, step in enumerate(steps):
+            for leg in route.get("legs", []):
+                for step in leg.get("steps", []):
                     step_geom = step.get("geometry", {}).get("coordinates", [])
                     step_dur = step.get("duration", 0)
                     step_dist = step.get("distance", 1)
                     
-                    # Estimate congestion ratio based on expected free-flow vs transit speed
                     speed_mps = step_dist / (step_dur if step_dur > 0 else 1)
-                    
-                    # Categorize traffic condition
-                    if speed_mps < 4.0:      # Slower than ~14 km/h -> Heavy traffic jam (Red)
+                    if speed_mps < 4.0:
                         congestion = "heavy"
-                    elif speed_mps < 8.0:    # Slower than ~28 km/h -> Moderate traffic (Yellow)
+                    elif speed_mps < 8.0:
                         congestion = "moderate"
-                    else:                    # Clear flow (Green)
+                    else:
                         congestion = "clear"
                         
                     if step_geom:
@@ -290,22 +314,18 @@ def update_location():
                             "congestion": congestion
                         })
             
-            # Fallback if no steps found
             if not segments_data and "geometry" in route:
-                full_coords = route["geometry"]["coordinates"]
-                segments_data.append({"coords": full_coords, "congestion": "clear"})
-                
+                segments_data.append({"coords": route["geometry"]["coordinates"], "congestion": "clear"})
     except Exception:
         pass
 
     return jsonify({
-        "closest_junction": closest["name"],
         "hospital_name": target_hospital["name"],
         "hospital_lat": dest_lat,
         "hospital_lng": dest_lng,
-        "straight_dist_m": straight_dist,
         "api_distance": api_dist,
         "api_eta": api_eta,
+        "upcoming_junctions": upcoming_juncs[:6], # Display top 6 upcoming sequential junctions
         "segments": segments_data
     })
 
