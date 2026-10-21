@@ -5,9 +5,8 @@ import os
 
 app = Flask(__name__)
 
-# Comprehensive Pan-India / Bengaluru Traffic Junctions Database
+# Verified Bengaluru Traffic Junctions Database
 SMART_JUNCTIONS = [
-    # Major Arterial Intersections & Hubs
     {"id": "J1", "name": "Silk Board Junction", "lat": 12.9176, "lng": 77.6235},
     {"id": "J2", "name": "Hebbal Circle", "lat": 13.0355, "lng": 77.5972},
     {"id": "J3", "name": "K.R. Puram Junction", "lat": 13.0035, "lng": 77.6893},
@@ -45,37 +44,83 @@ SMART_JUNCTIONS = [
     {"id": "J35", "name": "Varthur Kodi Junction", "lat": 12.9482, "lng": 77.7402}
 ]
 
-# Responsive Web Frontend for any browser/mobile device worldwide
+# Major Emergency Hospitals Destination Database
+HOSPITALS = [
+    {"name": "Manipal Hospital, Old Airport Rd", "lat": 12.9581, "lng": 77.6481},
+    {"name": "Aster CMI Hospital, Hebbal", "lat": 13.0531, "lng": 77.5906},
+    {"name": "St. John's Medical College, Koramangala", "lat": 12.9261, "lng": 77.6231},
+    {"name": "Fortis Hospital, Bannerghatta Rd", "lat": 12.8912, "lng": 77.6019},
+    {"name": "Narayana Health City, Electronic City", "lat": 12.8236, "lng": 77.6782},
+    {"name": "Columbia Asia / Manipal, Yeshwanthpur", "lat": 13.0285, "lng": 77.5492}
+]
+
 CLOUD_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Global Ambulance GPS & ETA Tracker</title>
+  <title>Ambulance Live Tracking & Mapping Dashboard</title>
+  <!-- Leaflet CSS for Interactive Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
-    body { font-family: -apple-system, sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; max-width: 600px; margin: auto; }
-    .card { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 16px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-    h2 { color: #38bdf8; margin-top: 0; font-size: 1.25rem; }
-    button { background: #059669; color: white; border: none; padding: 14px; width: 100%; border-radius: 8px; font-weight: bold; font-size: 1rem; cursor: pointer; }
+    body { font-family: -apple-system, sans-serif; background: #0f172a; color: #f8fafc; padding: 15px; max-width: 650px; margin: auto; }
+    .card { background: #1e293b; border-radius: 12px; padding: 16px; margin-bottom: 14px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+    h2 { color: #38bdf8; margin-top: 0; font-size: 1.15rem; }
+    label { font-size: 0.85rem; color: #94a3b8; display: block; margin-bottom: 6px; }
+    select, button { width: 100%; border-radius: 8px; font-weight: bold; font-size: 1rem; box-sizing: border-box; }
+    select { padding: 10px; background: #0f172a; color: white; border: 1px solid #475569; margin-bottom: 12px; }
+    button { background: #059669; color: white; border: none; padding: 14px; cursor: pointer; }
     button:active { background: #047857; }
-    .data-box { font-family: monospace; font-size: 0.95rem; line-height: 1.6; color: #a7f3d0; margin-top: 10px; }
+    .data-box { font-family: monospace; font-size: 0.9rem; line-height: 1.5; color: #a7f3d0; margin-top: 8px; }
+    #map { height: 320px; width: 100%; border-radius: 8px; margin-top: 10px; border: 1px solid #475569; z-index: 1; }
     .pulse { display: inline-block; width: 10px; height: 10px; background: #22c55e; border-radius: 50%; animation: pulse 1.5s infinite; margin-right: 6px; }
     @keyframes pulse { 0% { transform: scale(0.95); opacity: 0.8; } 50% { transform: scale(1.3); opacity: 1; } 100% { transform: scale(0.95); opacity: 0.8; } }
   </style>
 </head>
 <body>
   <div class="card">
+    <h2>🏥 Select Destination Hospital</h2>
+    <label for="hospitalSelect">Choose target hospital for emergency routing:</label>
+    <select id="hospitalSelect">
+      <option value="0">Manipal Hospital, Old Airport Rd</option>
+      <option value="1">Aster CMI Hospital, Hebbal</option>
+      <option value="2">St. John's Medical College, Koramangala</option>
+      <option value="3">Fortis Hospital, Bannerghatta Rd</option>
+      <option value="4">Narayana Health City, Electronic City</option>
+      <option value="5">Columbia Asia / Manipal, Yeshwanthpur</option>
+    </select>
+    
     <h2>🚑 Emergency GPS Transmitter</h2>
     <button onclick="startTracking()">START LIVE BROADCAST</button>
-    <div id="status" class="data-box" style="margin-top:12px;">Click to authorize location sharing...</div>
+    <div id="status" class="data-box" style="margin-top:10px;">Click to authorize location sharing...</div>
   </div>
 
   <div class="card">
-    <h2>🗺️ Live Cloud Command Dashboard</h2>
+    <h2>🗺️ Live Cloud Route & Map Dashboard</h2>
     <div id="etaOutput" class="data-box">Awaiting active GPS stream...</div>
+    
+    <!-- Interactive Map Container -->
+    <div id="map"></div>
   </div>
 
+  <!-- Leaflet JS Library -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+let map = null;
+let ambulanceMarker = null;
+let hospitalMarker = null;
+let routePolyline = null;
+
+function initMap(lat, lng) {
+  if (!map) {
+    map = L.map('map').setView([lat, lng], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+  }
+}
+
 function startTracking() {
   if (!navigator.geolocation) {
     alert("Geolocation is not supported by your browser");
@@ -87,6 +132,7 @@ function startTracking() {
     (pos) => {
       const lat = pos.coords.latitude;
       const lng = pos.coords.longitude;
+      const selectedHospitalIdx = document.getElementById('hospitalSelect').value;
       
       document.getElementById('status').innerHTML = `
         <span class="pulse"></span><b>Broadcasting Live GPS:</b><br>
@@ -96,17 +142,52 @@ function startTracking() {
       fetch('/api/update_location', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lat: lat, lng: lng })
+        body: JSON.stringify({ lat: lat, lng: lng, hospital_idx: selectedHospitalIdx })
       })
       .then(res => res.json())
       .then(data => {
         document.getElementById('etaOutput').innerHTML = `
           <b>Nearest Traffic Hub:</b> <span style="color:#38bdf8;">${data.closest_junction}</span><br>
+          <b>Target Hospital:</b> <span style="color:#f43f5e;">${data.hospital_name}</span><br>
           <b>Straight-line Dist:</b> ${data.straight_dist_m} meters<br><hr>
-          <b>🚗 Cloud Route Engine:</b><br>
+          <b>🚗 Live Routing Metrics:</b><br>
           • Road Distance: <b>${data.api_distance}</b><br>
-          • Dynamic ETA: <span style="color:#facc15; font-size:1.1rem;"><b>${data.api_eta}</b></span>
+          • Dynamic ETA: <span style="color:#facc15; font-size:1.05rem;"><b>${data.api_eta}</b></span>
         `;
+
+        // Initialize or Update Map
+        initMap(lat, lng);
+
+        const ambLatLng = [lat, lng];
+        const hospLatLng = [data.hospital_lat, data.hospital_lng];
+
+        // Update Ambulance Marker
+        if (!ambulanceMarker) {
+          ambulanceMarker = L.marker(ambLatLng).addTo(map).bindPopup("<b>🚑 Ambulance Location</b>");
+        } else {
+          ambulanceMarker.setLatLng(ambLatLng);
+        }
+
+        // Update Hospital Marker
+        if (!hospitalMarker) {
+          hospitalMarker = L.marker(hospLatLng).addTo(map).bindPopup(`<b>🏥 ${data.hospital_name}</b>`);
+        } else {
+          hospitalMarker.setLatLng(hospLatLng);
+          hospitalMarker.bindPopup(`<b>🏥 ${data.hospital_name}</b>`);
+        }
+
+        // Draw / Update Route Polyline from OSRM GeoJSON coordinates
+        if (data.route_coords && data.route_coords.length > 0) {
+          // OSRM returns coordinates as [lng, lat], Leaflet needs [lat, lng]
+          const latLngs = data.route_coords.map(coord => [coord[1], coord[0]]);
+          
+          if (!routePolyline) {
+            routePolyline = L.polyline(latLngs, { color: '#2563eb', weight: 5, opacity: 0.8 }).addTo(map);
+            map.fitBounds(routePolyline.getBounds(), { padding: [50, 50] });
+          } else {
+            routePolyline.setLatLngs(latLngs);
+          }
+        }
       })
       .catch(err => {
         console.error("Cloud sync error:", err);
@@ -128,24 +209,6 @@ def haversine_m(lat1, lon1, lat2, lon2):
     a = math.sin(dp/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-def get_osrm_route(orig_lat, orig_lng, dest_lat, dest_lng):
-    url = f"http://router.project-osrm.org/route/v1/driving/{orig_lng},{orig_lat};{dest_lng},{dest_lat}?overview=false"
-    try:
-        response = requests.get(url, timeout=4)
-        data = response.json()
-        if data.get("code") != "Ok":
-            return "Routing Error", "Routing Error"
-            
-        route = data["routes"][0]
-        dist_m = route["distance"]
-        duration_s = route["duration"]
-        
-        dist_text = f"{dist_m / 1000:.2f} km" if dist_m >= 1000 else f"{dist_m:.0f} m"
-        eta_text = f"{max(1, round(duration_s / 60))} mins"
-        return dist_text, eta_text
-    except Exception:
-        return "Offline Mode", "2 mins"
-
 @app.route("/")
 def index():
     return render_template_string(CLOUD_HTML)
@@ -155,19 +218,47 @@ def update_location():
     data = request.json
     phone_lat = float(data["lat"])
     phone_lng = float(data["lng"])
+    h_idx = int(data.get("hospital_idx", 0))
+    
+    # Get selected hospital
+    target_hospital = HOSPITALS[h_idx]
+    dest_lat = target_hospital["lat"]
+    dest_lng = target_hospital["lng"]
 
-    # Compute closest junction
+    # Compute closest traffic junction
     closest = min(SMART_JUNCTIONS, key=lambda j: haversine_m(phone_lat, phone_lng, j["lat"], j["lng"]))
     straight_dist = round(haversine_m(phone_lat, phone_lng, closest["lat"], closest["lng"]))
     
-    # Get live route metrics
-    api_dist, api_eta = get_osrm_route(phone_lat, phone_lng, closest["lat"], closest["lng"])
+    # Query OSRM Route API requesting full geometry coordinates for the Leaflet map polyline
+    url = f"http://router.project-osrm.org/route/v1/driving/{phone_lng},{phone_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson"
+    
+    api_dist = "N/A"
+    api_eta = "N/A"
+    route_coords = []
+    
+    try:
+        response = requests.get(url, timeout=5)
+        res_data = response.json()
+        if res_data.get("code") == "Ok":
+            route = res_data["routes"][0]
+            dist_m = route["distance"]
+            duration_s = route["duration"]
+            
+            api_dist = f"{dist_m / 1000:.2f} km" if dist_m >= 1000 else f"{dist_m:.0f} m"
+            api_eta = f"{max(1, round(duration_s / 60))} mins"
+            route_coords = route["geometry"]["coordinates"] # list of [lng, lat]
+    except Exception:
+        pass
 
     return jsonify({
         "closest_junction": closest["name"],
+        "hospital_name": target_hospital["name"],
+        "hospital_lat": dest_lat,
+        "hospital_lng": dest_lng,
         "straight_dist_m": straight_dist,
         "api_distance": api_dist,
-        "api_eta": api_eta
+        "api_eta": api_eta,
+        "route_coords": route_coords
     })
 
 if __name__ == "__main__":
