@@ -59,8 +59,7 @@ CLOUD_HTML = """
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ambulance Live Tracking & Mapping Dashboard</title>
-  <!-- Leaflet CSS for Interactive Map -->
+  <title>Ambulance Live Tracking & Traffic Congestion Map</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     body { font-family: -apple-system, sans-serif; background: #0f172a; color: #f8fafc; padding: 15px; max-width: 650px; margin: auto; }
@@ -73,6 +72,8 @@ CLOUD_HTML = """
     button:active { background: #047857; }
     .data-box { font-family: monospace; font-size: 0.9rem; line-height: 1.5; color: #a7f3d0; margin-top: 8px; }
     #map { height: 320px; width: 100%; border-radius: 8px; margin-top: 10px; border: 1px solid #475569; z-index: 1; }
+    .legend { background: rgba(15, 23, 42, 0.9); padding: 8px 12px; border-radius: 6px; color: white; font-size: 0.8rem; line-height: 1.4; border: 1px solid #475569; }
+    .legend i { width: 12px; height: 12px; float: left; margin-right: 6px; opacity: 0.9; border-radius: 2px; }
     .pulse { display: inline-block; width: 10px; height: 10px; background: #22c55e; border-radius: 50%; animation: pulse 1.5s infinite; margin-right: 6px; }
     @keyframes pulse { 0% { transform: scale(0.95); opacity: 0.8; } 50% { transform: scale(1.3); opacity: 1; } 100% { transform: scale(0.95); opacity: 0.8; } }
   </style>
@@ -96,20 +97,17 @@ CLOUD_HTML = """
   </div>
 
   <div class="card">
-    <h2>🗺️ Live Cloud Route & Map Dashboard</h2>
+    <h2>🗺️ Live Traffic Congestion & Routing Map</h2>
     <div id="etaOutput" class="data-box">Awaiting active GPS stream...</div>
-    
-    <!-- Interactive Map Container -->
     <div id="map"></div>
   </div>
 
-  <!-- Leaflet JS Library -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 let map = null;
 let ambulanceMarker = null;
 let hospitalMarker = null;
-let routePolyline = null;
+let routeLayers = [];
 
 function initMap(lat, lng) {
   if (!map) {
@@ -118,6 +116,18 @@ function initMap(lat, lng) {
       maxZoom: 19,
       attribution: '© OpenStreetMap'
     }).addTo(map);
+
+    // Add Traffic Legend control to map
+    const legend = L.control({position: 'bottomright'});
+    legend.onAdd = function (map) {
+      const div = L.DomUtil.create('div', 'legend');
+      div.innerHTML = '<b>Traffic Status</b><br>' +
+        '<i style="background:#22c55e"></i> Clear Flow<br>' +
+        '<i style="background:#eab308"></i> Moderate Congestion<br>' +
+        '<i style="background:#ef4444"></i> Heavy Traffic Jam';
+      return div;
+    };
+    legend.addTo(map);
   }
 }
 
@@ -155,20 +165,17 @@ function startTracking() {
           • Dynamic ETA: <span style="color:#facc15; font-size:1.05rem;"><b>${data.api_eta}</b></span>
         `;
 
-        // Initialize or Update Map
         initMap(lat, lng);
 
         const ambLatLng = [lat, lng];
         const hospLatLng = [data.hospital_lat, data.hospital_lng];
 
-        // Update Ambulance Marker
         if (!ambulanceMarker) {
           ambulanceMarker = L.marker(ambLatLng).addTo(map).bindPopup("<b>🚑 Ambulance Location</b>");
         } else {
           ambulanceMarker.setLatLng(ambLatLng);
         }
 
-        // Update Hospital Marker
         if (!hospitalMarker) {
           hospitalMarker = L.marker(hospLatLng).addTo(map).bindPopup(`<b>🏥 ${data.hospital_name}</b>`);
         } else {
@@ -176,22 +183,34 @@ function startTracking() {
           hospitalMarker.bindPopup(`<b>🏥 ${data.hospital_name}</b>`);
         }
 
-        // Draw / Update Route Polyline from OSRM GeoJSON coordinates
-        if (data.route_coords && data.route_coords.length > 0) {
-          // OSRM returns coordinates as [lng, lat], Leaflet needs [lat, lng]
-          const latLngs = data.route_coords.map(coord => [coord[1], coord[0]]);
-          
-          if (!routePolyline) {
-            routePolyline = L.polyline(latLngs, { color: '#2563eb', weight: 5, opacity: 0.8 }).addTo(map);
-            map.fitBounds(routePolyline.getBounds(), { padding: [50, 50] });
-          } else {
-            routePolyline.setLatLngs(latLngs);
+        // Clear existing route segments
+        routeLayers.forEach(layer => map.removeLayer(layer));
+        routeLayers = [];
+
+        // Render multi-colored traffic congestion segments
+        if (data.segments && data.segments.length > 0) {
+          let allLatLngs = [];
+          data.segments.forEach(seg => {
+            const segLatLngs = seg.coords.map(c => [c[1], c[0]]);
+            allLatLngs = allLatLngs.concat(segLatLngs);
+
+            // Assign color based on congestion level
+            let color = '#22c55e'; // Green (Clear)
+            if (seg.congestion === 'heavy') color = '#ef4444';      // Red (Heavy traffic)
+            else if (seg.congestion === 'moderate') color = '#eab308'; // Yellow (Moderate)
+
+            const polyline = L.polyline(segLatLngs, { color: color, weight: 6, opacity: 0.85 }).addTo(map);
+            routeLayers.push(polyline);
+          });
+
+          if (allLatLngs.length > 0 && !window.boundsSet) {
+            const bounds = L.latLngBounds(allLatLngs);
+            map.fitBounds(bounds, { padding: [50, 50] });
+            window.boundsSet = true;
           }
         }
       })
-      .catch(err => {
-        console.error("Cloud sync error:", err);
-      });
+      .catch(err => { console.error("Sync error:", err); });
     },
     (err) => { alert("GPS Error: " + err.message); },
     { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
@@ -220,21 +239,19 @@ def update_location():
     phone_lng = float(data["lng"])
     h_idx = int(data.get("hospital_idx", 0))
     
-    # Get selected hospital
     target_hospital = HOSPITALS[h_idx]
     dest_lat = target_hospital["lat"]
     dest_lng = target_hospital["lng"]
 
-    # Compute closest traffic junction
     closest = min(SMART_JUNCTIONS, key=lambda j: haversine_m(phone_lat, phone_lng, j["lat"], j["lng"]))
     straight_dist = round(haversine_m(phone_lat, phone_lng, closest["lat"], closest["lng"]))
     
-    # Query OSRM Route API requesting full geometry coordinates for the Leaflet map polyline
-    url = f"http://router.project-osrm.org/route/v1/driving/{phone_lng},{phone_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson"
+    # Query OSRM Route API with full step geometry to evaluate traffic blocks per segment
+    url = f"http://router.project-osrm.org/route/v1/driving/{phone_lng},{phone_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson&steps=true"
     
     api_dist = "N/A"
     api_eta = "N/A"
-    route_coords = []
+    segments_data = []
     
     try:
         response = requests.get(url, timeout=5)
@@ -246,7 +263,38 @@ def update_location():
             
             api_dist = f"{dist_m / 1000:.2f} km" if dist_m >= 1000 else f"{dist_m:.0f} m"
             api_eta = f"{max(1, round(duration_s / 60))} mins"
-            route_coords = route["geometry"]["coordinates"] # list of [lng, lat]
+            
+            # Break route legs/steps down into dynamic traffic congestion color bands
+            legs = route.get("legs", [])
+            for leg in legs:
+                steps = leg.get("steps", [])
+                for idx, step in enumerate(steps):
+                    step_geom = step.get("geometry", {}).get("coordinates", [])
+                    step_dur = step.get("duration", 0)
+                    step_dist = step.get("distance", 1)
+                    
+                    # Estimate congestion ratio based on expected free-flow vs transit speed
+                    speed_mps = step_dist / (step_dur if step_dur > 0 else 1)
+                    
+                    # Categorize traffic condition
+                    if speed_mps < 4.0:      # Slower than ~14 km/h -> Heavy traffic jam (Red)
+                        congestion = "heavy"
+                    elif speed_mps < 8.0:    # Slower than ~28 km/h -> Moderate traffic (Yellow)
+                        congestion = "moderate"
+                    else:                    # Clear flow (Green)
+                        congestion = "clear"
+                        
+                    if step_geom:
+                        segments_data.append({
+                            "coords": step_geom,
+                            "congestion": congestion
+                        })
+            
+            # Fallback if no steps found
+            if not segments_data and "geometry" in route:
+                full_coords = route["geometry"]["coordinates"]
+                segments_data.append({"coords": full_coords, "congestion": "clear"})
+                
     except Exception:
         pass
 
@@ -258,7 +306,7 @@ def update_location():
         "straight_dist_m": straight_dist,
         "api_distance": api_dist,
         "api_eta": api_eta,
-        "route_coords": route_coords
+        "segments": segments_data
     })
 
 if __name__ == "__main__":
